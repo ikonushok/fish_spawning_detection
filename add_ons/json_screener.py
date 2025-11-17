@@ -3,6 +3,8 @@ import os
 import json
 import sys
 from typing import Any
+import webbrowser
+from pathlib import Path
 
 
 def summarize_classic_one_line(obj: Any, max_items: int = 5) -> str:
@@ -32,66 +34,6 @@ def summarize_classic_one_line(obj: Any, max_items: int = 5) -> str:
 
     else:
         return f"{type(obj).__name__}: {repr(obj)}"
-
-
-def print_structure_classic(
-    obj: Any,
-    prefix: str = "",
-    max_depth: int = 3,
-    max_items: int = 5,   # теперь НЕ ограничивает ключи, только глубину
-    level: int = 0,
-):
-    """
-    Классический однострочный формат, но с тем же поведением, что и дерево:
-    - print ALL dict keys
-    - print ONLY FIRST element of list
-    - print "... (N more items)"
-    """
-
-    # Печатаем однострочное описание
-    print(prefix + summarize_classic_one_line(obj, max_items=max_items))
-
-    if level >= max_depth:
-        return
-
-    # --------------------------
-    # dict — рекурсируем по всем ключам
-    # --------------------------
-    if isinstance(obj, dict):
-        for k, v in obj.items():  # НЕ обрезаем!
-            if isinstance(v, (dict, list)):
-                print_structure_classic(
-                    v,
-                    prefix=prefix + "  ",
-                    max_depth=max_depth,
-                    max_items=max_items,
-                    level=level + 1,
-                )
-
-    # --------------------------
-    # list — рекурсируем ТОЛЬКО в [0]
-    # --------------------------
-    elif isinstance(obj, list):
-        total = len(obj)
-
-        if total == 0:
-            return
-
-        # показываем структуру только первого элемента
-        first_val = obj[0]
-        if isinstance(first_val, (dict, list)):
-            print_structure_classic(
-                first_val,
-                prefix=prefix + "  ",
-                max_depth=max_depth,
-                max_items=max_items,
-                level=level + 1,
-            )
-
-        # выводим "... N more items"
-        if total > 1:
-            print(prefix + f"... ({total - 1} more items)")
-
 
 
 def print_structure_tree(
@@ -165,7 +107,6 @@ def print_structure_tree(
         print(prefix + f"value: {preview}")
 
 
-
 def inspect_json_file(
     path: str,
     base_indent: int,
@@ -185,10 +126,9 @@ def inspect_json_file(
 
     print("Тип корневого объекта:", type(data).__name__)
 
-    # создаём единый prefix
-    prefix = "  " * base_indent
-
     if tree_style:
+        # --- вывод в консоль деревом ---
+        prefix = "  " * base_indent
         print_structure_tree(
             data,
             prefix=prefix,
@@ -196,14 +136,13 @@ def inspect_json_file(
             max_items=max_items,
             level=0,
         )
+
     else:
-        print_structure_classic(
-            data,
-            prefix=prefix,
-            max_depth=max_depth,
-            max_items=max_items,
-            level=0,
-        )
+        # --- ОТКРЫТЬ JSON В БРАУЗЕРЕ ---
+        from pathlib import Path  # можно здесь или сверху
+        uri = Path(path).resolve().as_uri()
+        print(f"Открываю в браузере: {uri}")
+        webbrowser.open(uri)
 
 
 def inspect_folder(
@@ -254,5 +193,5 @@ if __name__ == "__main__":
         base_indent=1,  # параметр, который отвечает за красивую иерархическую печать структуры JSON, делая её читаемой
         max_depth=3,    # увеличить глубину показа структуры
         max_items=0,    # показать больше ключей/элементов
-        tree_style=True,   # изменить стиль вывода собранной информации
+        tree_style=False,   # изменить стиль вывода собранной информации
     )
