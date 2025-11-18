@@ -1,0 +1,42 @@
+# config.yaml
+dataset:
+  # корень COCO-датасета
+  root_dir: "dataset"
+
+  train:
+    images_dir: "job_181_dataset_2025_09_08_02_20_40_coco 1/images/default"
+    annotations_file: "job_181_dataset_2025_09_08_02_20_40_coco 1/annotations/instances_default.json"
+
+  val:
+    images_dir: "job_191_dataset_2025_09_12_04_15_59_coco 1/images/default"
+    annotations_file: "job_191_dataset_2025_09_12_04_15_59_coco 1/annotations/instances_default.json"
+
+  unlabeled:
+    # тут неразмеченные кадры (стримы с дрона и т.п.)
+    images_dir: "job_196_dataset_2025_09_03_03_38_08_coco 1_ defective/images/default"
+
+classes:
+  - fish  # один класс
+
+yolo:
+#  base_model: "artefacts/yolov8n.pt"  # Есть более крупные версии (yolov8s, yolov8m, yolov8l, yolov8x)
+#  base_model: "artefacts/yolov7-tiny.pt"
+  base_model: "artefacts/yolov5nu.pt"
+  img_size: 1280
+  batch_size: 8
+  epochs_supervised: 10 # 50 ??  # базовое обучение (только размеченные данные)
+  epochs_per_iter: 5    # 20 ??  # обучение на каждом шаге Curriculum
+
+curriculum:
+  num_iters: 5
+  start_percentile: 80.0   # сначала берём только самые уверенные кадры
+  step_percentile: 20.0    # потом порог понижаем
+  max_images_per_iter: 5   # 50?? 500 ??
+  score_mode: "min"        # min/mean/max по conf боксов в кадре
+
+output:
+  labels_dir: "artefacts/labels"                            # сюда сохраним YOLO txt для train/val
+  yolo_data_supervised: "artefacts/data_supervised.yaml"
+  runs_supervised: "artefacts/runs/supervised_yolo"
+  curriculum_dir: "artefacts/runs/curriculum_yolo"
+  log_file: "artefacts/training_log.txt"                    # Путь к файлу лога
