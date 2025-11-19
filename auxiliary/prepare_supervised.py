@@ -1,5 +1,6 @@
-# src/prepare_supervised.py
-# конвертация + базовое обучение
+# auxiliary/prepare_supervised.py
+# базовое обучение по уже ГОТОВОМУ YOLO-датасету (без COCO-аннотаций)
+
 import sys
 import yaml
 import logging
@@ -7,94 +8,86 @@ from pathlib import Path
 from ultralytics import YOLO
 
 from .config_loader import load_config
-from .coco_to_yolo import convert_coco_to_yolo_for_split
 
 
-# Настройка логгера
-cfg = load_config("configs/config.yaml")
-log_file = cfg["output"]["log_file"]  # Берём путь из конфигурации
-log_path = Path(log_file)
+# === ОПРЕДЕЛЯЕМ КОРЕНЬ ПРОЕКТА ===
+# /Users/bobrsubr/PycharmProjects/fish_spawning_detection
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Абсолютный путь к configs/config.yaml
+CONFIG_PATH = (PROJECT_ROOT / "configs" / "config.yaml").resolve()
+
+
+# === НАСТРОЙКА ЛОГГЕРА ===
+cfg_for_logging = load_config(str(CONFIG_PATH))
+
+# в конфиге: "artefacts/training_log.txt"
+log_file_rel = cfg_for_logging["output"]["log_file"]
+log_file = (PROJECT_ROOT / log_file_rel).resolve()
+
+log_path = log_file
 log_path.parent.mkdir(parents=True, exist_ok=True)  # Создаём папки для лога, если их нет
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-# Создаём обработчик для записи в файл
 file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 logging.getLogger().addHandler(file_handler)
 
-# Создаём обработчик для вывода в консоль
+# Если нужен вывод и в консоль — раскомментируй
 # console_handler = logging.StreamHandler(sys.stdout)
 # console_handler.setLevel(logging.INFO)
 # console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 # logging.getLogger().addHandler(console_handler)
 
 
-
 def prepare_yolo_labels(cfg: dict, root_dir: Path) -> dict:
     """
-    Конвертируем COCO-аннотации для train/val в YOLO txt.
-    Пишем ЛЕЙБЛЫ туда, где их ждёт YOLO:
-      job_181.../labels/default
-      job_191.../labels/default
+    НОВАЯ версия:
+    НИЧЕГО не конвертируем, просто:
+      - находим папки с картинками (train/val) из конфига
+      - находим соответствующие папки с лейблами (labels/Train, labels/Val)
+    Структура:
+        root_dir = dataset/yolo_dataset
+        images/Train
+        images/Val
+        images/Unlabeled
+        labels/Train
+        labels/Val
     """
-    # logging.debug("=== Конвертация TRAIN (instances_default.json) ===")
-    class_name = cfg['classes'][0]
     train_cfg = cfg["dataset"]["train"]
     val_cfg = cfg["dataset"]["val"]
 
-    # Папки с картинками
+    # Папки с изображениями (абсолютные пути)
     train_images_dir = (root_dir / train_cfg["images_dir"]).resolve()
     val_images_dir = (root_dir / val_cfg["images_dir"]).resolve()
 
-    # job_* уровень: .../job_181_dataset_..._coco 1
-    train_job_dir = train_images_dir.parents[1]  # default -> images -> job_181...
-    val_job_dir = val_images_dir.parents[1]  # default -> images -> job_191...
+    # Имя сплита (Train / Val)
+    train_split_name = Path(train_cfg["images_dir"]).name  # "Train"
+    val_split_name = Path(val_cfg["images_dir"]).name      # "Val"
 
-    # Куда YOLO будет смотреть за лейблами:
-    #   job_181.../labels/default
-    #   job_191.../labels/default
-    train_labels_dir = train_job_dir / "labels" / train_images_dir.name
-    val_labels_dir = val_job_dir / "labels" / val_images_dir.name
+    # Папки с лейблами: root_dir/labels/<split_name>
+    train_labels_dir = (root_dir / "labels" / train_split_name).resolve()
+    val_labels_dir = (root_dir / "labels" / val_split_name).resolve()
 
-    # Создание папок, если их нет
-    train_labels_dir.mkdir(parents=True, exist_ok=True)
-    val_labels_dir.mkdir(parents=True, exist_ok=True)
+    if not train_images_dir.exists():
+        raise FileNotFoundError(f"TRAIN images dir not found: {train_images_dir}")
+    if not val_images_dir.exists():
+        raise FileNotFoundError(f"VAL images dir not found: {val_images_dir}")
+    if not train_labels_dir.exists():
+        raise FileNotFoundError(f"TRAIN labels dir not found: {train_labels_dir}")
+    if not val_labels_dir.exists():
+        raise FileNotFoundError(f"VAL labels dir not found: {val_labels_dir}")
 
-    logging.info("\n=== Конвертация TRAIN (instances_default.json) ===")
-    train_stats = convert_coco_to_yolo_for_split(
-        images_dir=train_images_dir,
-        annotations_path=root_dir / train_cfg["annotations_file"],
-        labels_out_dir=train_labels_dir,
-        class_name=class_name,
-        yolo_class_id=0,
-    )
-    logging.info(
-        f"\nTRAIN: всего картинок:         {train_stats['total_images']}\n"
-        f"TRAIN: картинок с рыбами:      {train_stats['images_with_fish']}\n"
-        f"TRAIN: всего боксов рыб:       {train_stats['total_fish_boxes']}\n"
-        f"TRAIN: отсутствующих картинок: {train_stats['missing_images']}\n"
-    )
-
-    logging.info("\n=== Конвертация VAL (instances_default.json) ===")
-    val_stats = convert_coco_to_yolo_for_split(
-        images_dir=val_images_dir,
-        annotations_path=root_dir / val_cfg["annotations_file"],
-        labels_out_dir=val_labels_dir,
-        class_name=class_name,
-        yolo_class_id=0,
-    )
-    logging.info(
-        f"\nVAL:   всего картинок:         {val_stats['total_images']}\n"
-        f"VAL:   картинок с рыбами:      {val_stats['images_with_fish']}\n"
-        f"VAL:   всего боксов рыб:       {val_stats['total_fish_boxes']}\n"
-        f"VAL:   отсутствующих картинок: {val_stats['missing_images']}\n"
-    )
+    logging.info("\nИспользуем ГОТОВЫЙ YOLO-датасет, конвертацию COCO -> YOLO пропускаем.")
+    logging.info(f"TRAIN images: {train_images_dir}")
+    logging.info(f"TRAIN labels: {train_labels_dir}")
+    logging.info(f"VAL   images: {val_images_dir}")
+    logging.info(f"VAL   labels: {val_labels_dir}\n")
 
     return {
         "train_images": str(train_images_dir),
@@ -106,52 +99,122 @@ def prepare_yolo_labels(cfg: dict, root_dir: Path) -> dict:
 
 def create_yolo_data_yaml(cfg: dict, paths: dict, root_dir: Path) -> Path:
     """
-    Создаём data_supervised.yaml.
-    Сначала проверяем, есть ли папка для сохранения файла.
-    Если нет — создаём.
-    """
-    data_yaml_path = root_dir / cfg["output"]["yolo_data_supervised"]
+    Создаём data_supervised.yaml (путь берём из cfg["output"]["yolo_data_supervised"]).
 
-    # Создание папки, если её нет
+    В конфиге:
+      yolo_data_supervised: "artefacts/data_supervised.yaml"
+
+    Реальный путь:
+      /.../fish_spawning_detection/artefacts/data_supervised.yaml
+    """
+    data_yaml_rel = cfg["output"]["yolo_data_supervised"]
+    data_yaml_path = (PROJECT_ROOT / data_yaml_rel).resolve()
+
     data_yaml_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Строим yaml
     names = cfg["classes"]
+
+    train_rel = cfg["dataset"]["train"]["images_dir"]  # "images/Train"
+    val_rel = cfg["dataset"]["val"]["images_dir"]      # "images/Val"
+
     yolo_data = {
-        "path": str(root_dir),
-        "train": paths["train_images"],
-        "val": paths["val_images"],
+        "path": str(root_dir),         # /.../dataset/yolo_dataset
+        "train": train_rel,            # "images/Train"
+        "val": val_rel,                # "images/Val"
         "names": {i: name for i, name in enumerate(names)},
     }
 
     with data_yaml_path.open("w") as f:
-        yaml.safe_dump(yolo_data, f)
+        yaml.safe_dump(yolo_data, f, sort_keys=False, allow_unicode=True)
 
-    logging.info(f"Создан файл: {data_yaml_path}")
+    logging.info(f"Создан файл data_supervised.yaml: {data_yaml_path}")
+    logging.info(f"Содержимое data.yaml: {yolo_data}")
 
     return data_yaml_path
 
 
-def train_supervised(cfg_path: str = "config.yaml"):
-    logging.debug(f"Запуск тренировки на конфиге: {cfg_path}")
-    cfg = load_config(cfg_path)
-    root_dir = Path(cfg["dataset"]["root_dir"]).resolve()
+def log_split_stats(split_name: str, images_dir: Path, labels_dir: Path) -> None:
+    """
+    Логирует статистику по сплиту:
+      - всего картинок
+      - всего txt-меток
+      - картинок с метками
+      - картинок без меток
+    """
+    img_paths = [p for p in images_dir.iterdir()
+                 if p.is_file() and p.suffix.lower() in [".jpg", ".jpeg", ".png"]]
+    label_paths = [p for p in labels_dir.iterdir()
+                   if p.is_file() and p.suffix.lower() == ".txt"]
 
-    # 1) COCO -> YOLO txt
+    img_set = {p.stem for p in img_paths}
+    label_set = {p.stem for p in label_paths}
+
+    images_with_labels = img_set & label_set
+    images_without_labels = img_set - label_set
+    labels_without_images = label_set - img_set
+
+    logging.info(
+        f"{split_name.upper()} STATS: "
+        f"картинок всего: {len(img_paths)}, "
+        f"меток всего: {len(label_paths)}, "
+        f"картинок с метками: {len(images_with_labels)}, "
+        f"картинок без меток: {len(images_without_labels)}, "
+        f"меток без картинок: {len(labels_without_images)}\n"
+    )
+
+
+def train_supervised(cfg_path: str | None = None):
+    """
+    Если cfg_path не задан, используем CONFIG_PATH (configs/config.yaml в корне проекта).
+    """
+    if cfg_path is None:
+        cfg_path = str(CONFIG_PATH)
+    else:
+        # если передали относительный путь — считаем его от PROJECT_ROOT
+        cfg_path = str((PROJECT_ROOT / cfg_path).resolve()) if not Path(cfg_path).is_absolute() else cfg_path
+
+    logging.info(f"Запуск тренировки на конфиге: {cfg_path}")
+    cfg = load_config(cfg_path)
+
+    # dataset.root_dir: "dataset/yolo_dataset" из конфига
+    root_dir_cfg = Path(cfg["dataset"]["root_dir"])
+    if root_dir_cfg.is_absolute():
+        root_dir = root_dir_cfg
+    else:
+        root_dir = (PROJECT_ROOT / root_dir_cfg).resolve()
+
+    logging.info(f"Корень YOLO-датасета: {root_dir}")
+
+    # 1) Проверяем папки и собираем пути
     paths = prepare_yolo_labels(cfg, root_dir)
 
-    # 2) data_supervised.yaml
+    # 1.1) Логируем статистику по Train и Val
+    train_images_dir = Path(paths["train_images"])
+    train_labels_dir = Path(paths["train_labels"])
+    val_images_dir = Path(paths["val_images"])
+    val_labels_dir = Path(paths["val_labels"])
+
+    log_split_stats("train", train_images_dir, train_labels_dir)
+    log_split_stats("val", val_images_dir, val_labels_dir)
+
+    # 2) Создаём data_supervised.yaml в PROJECT_ROOT/artefacts/...
     data_yaml_path = create_yolo_data_yaml(cfg, paths, root_dir)
 
-    # 3) Обучение YOLO только на размеченных данных (шаг 0)
-    logging.info(f"Запуск обучения модели с путём данных: {data_yaml_path}")
+    # 3) Обучение YOLO
+    logging.info(f"Запуск обучения модели с data.yaml: {data_yaml_path}")
     model = YOLO(cfg["yolo"]["base_model"])
+
+    # runs_supervised: "artefacts/runs/supervised_yolo" -> абсолютный путь
+    runs_rel = cfg["output"]["runs_supervised"]
+    runs_dir = (PROJECT_ROOT / runs_rel).resolve()
+    runs_dir.parent.mkdir(parents=True, exist_ok=True)
+
     model.train(
         data=str(data_yaml_path),
         imgsz=cfg["yolo"]["img_size"],
         epochs=cfg["yolo"]["epochs_supervised"],
         batch=cfg["yolo"]["batch_size"],
-        project=cfg["output"]["runs_supervised"],
+        project=str(runs_dir),
         name="baseline",
     )
 
