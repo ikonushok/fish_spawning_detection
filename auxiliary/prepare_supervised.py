@@ -38,12 +38,6 @@ file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 logging.getLogger().addHandler(file_handler)
 
-# Если нужен вывод и в консоль — раскомментируй
-# console_handler = logging.StreamHandler(sys.stdout)
-# console_handler.setLevel(logging.INFO)
-# console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-# logging.getLogger().addHandler(console_handler)
-
 
 def prepare_yolo_labels(cfg: dict, root_dir: Path) -> dict:
     """

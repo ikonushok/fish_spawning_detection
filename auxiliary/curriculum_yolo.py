@@ -1,7 +1,7 @@
 # auxiliary/curriculum_yolo.py
-
 import os
 import yaml
+import shutil
 import logging
 
 from pathlib import Path
@@ -152,7 +152,6 @@ def verify_labels(train_images_dir: Path, train_labels_dir: Path) -> int:
     return errors
 
 
-
 def copy_image_if_needed(src: Path, dest: Path):
     """Проверка, существует ли файл, прежде чем копировать."""
     if not dest.exists():
@@ -160,6 +159,29 @@ def copy_image_if_needed(src: Path, dest: Path):
         logging.debug(f"Изображение {src.name} скопировано в {dest}")
     else:
         logging.debug(f"Изображение {src.name} уже существует в {dest}")
+
+
+def remove_previous_iteration_data(iter_idx: int, work_dir: Path):
+    """Удаляет данные предыдущей итерации, чтобы освободить место на диске."""
+    prev_iter_dir = work_dir / f"iter_{iter_idx - 1}"
+    if prev_iter_dir.exists():
+        print(f"Удаление старых данных итерации {iter_idx - 1}...")
+        shutil.rmtree(f'{prev_iter_dir}/images')  # Удаляет всю директорию с данными итерации
+        shutil.rmtree(f'{prev_iter_dir}/labels')  # Удаляет всю директорию с данными итерации
+        shutil.rmtree(f'{prev_iter_dir}/weights')  # Удаляет всю директорию с данными итерации
+        # print(f"Данные итерации {iter_idx - 1} удалены.")
+
+
+def move_image_to_used(src: Path, dest: Path):
+    """Перемещает изображение из папки Unlabeled в папку Unlabeled_used."""
+    try:
+        # Если целевая папка не существует, создаем её
+        dest.mkdir(parents=True, exist_ok=True)
+        # Перемещаем файл в новую папку
+        shutil.move(str(src), str(dest / src.name))  # Перемещаем файл
+        logging.debug(f"Изображение {src.name} перемещено в {dest}")
+    except Exception as e:
+        logging.error(f"Ошибка при перемещении {src.name} в {dest}: {e}")
 
 
 def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter_idx: int):
@@ -252,8 +274,8 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
         pseudo_images_dir = prev_dir / "images"
         pseudo_labels_dir = prev_dir / "labels"
 
-        logging.info(f"Ищу псевдорасметку в папке: {pseudo_images_dir}")
-        logging.info(f"Ищу метки псевдорасметки в папке: {pseudo_labels_dir}")
+        logging.info(f"Ищу псевдоразметку в папке: {pseudo_images_dir}")
+        logging.info(f"Ищу метки псевдоразметки в папке: {pseudo_labels_dir}")
 
         if not pseudo_images_dir.exists():
             continue
@@ -269,7 +291,7 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
                     labels = f.readlines()
 
                 if not labels:
-                    logging.warning(f"Метка для {img_path.name} из псевдорасметки пуста! Изображение не добавляется.")
+                    logging.warning(f"Метка для {img_path.name} из псевдоразметки пуста! Изображение не добавляется.")
                     continue
 
                 valid_format = True
@@ -289,7 +311,7 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
 
                 if not valid_format:
                     logging.warning(
-                        f"Некорректный формат метки для изображения {img_path.name} из псевдорасметки. Пропускаем."
+                        f"Некорректный формат метки для изображения {img_path.name} из псевдоразметки. Пропускаем."
                     )
                     continue
 
@@ -300,13 +322,9 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
 
                 if not out_label_path.exists():
                     copy2(label_path, out_label_path)
-                logging.info(
-                    f"Метка для {img_path.name} из псевдорасметки найдена и скопирована в {out_label_path}"
-                )
+                logging.debug(f"Метка для {img_path.name} из псевдоразметки найдена и скопирована в {out_label_path}")
             else:
-                logging.warning(
-                    f"Метка для {img_path.name} из псевдорасметки не найдена! Изображение не добавляется."
-                )
+                logging.warning(f"Метка для {img_path.name} из псевдоразметки не найдена! Изображение не добавляется.")
 
     # Проверим, что метки для всех изображений существуют и корректны
     errors = verify_labels(train_images_dir, train_labels_dir)
@@ -373,12 +391,17 @@ def curriculum_training(config_path: str | None = None):
     work_dir.mkdir(parents=True, exist_ok=True)
 
     current_percentile = cfg["curriculum"]["start_percentile"]
+    max_images_per_iter = cfg["curriculum"]["max_images_per_iter"]
+    max_images_increase_factor = cfg["curriculum"]["max_images_increase_factor"]  # новый параметр
+    unlabeled_used_dir = root_dir / cfg["dataset"]["unlabeled"]["unlabeled_used"]
 
     for it in range(cfg["curriculum"]["num_iters"]):
         print(
             f"\n=== Curriculum iteration {it+1}/{cfg['curriculum']['num_iters']} "
-            f"(percentile={current_percentile}) ==="
+            f"(percentile={current_percentile}, max_images={max_images_per_iter}) ==="
         )
+        # После завершения тренировки на текущей итерации
+        remove_previous_iteration_data(it, work_dir)
 
         # Проверяем, остались ли неразмеченные кадры
         if not list_unlabeled_images(unlabeled_dir):
@@ -432,6 +455,7 @@ def curriculum_training(config_path: str | None = None):
             model=model,
             unlabeled_images_dir=unlabeled_dir,
             score_mode=cfg["curriculum"]["score_mode"],
+            batch_size=cfg["yolo"]["batch_size"]
         )
 
         thr = select_threshold_by_percentile(scores, current_percentile)
@@ -441,21 +465,33 @@ def curriculum_training(config_path: str | None = None):
         used_original_images = save_pseudo_labels_yolo(
             scores=scores,
             thr=thr,
-            max_images=cfg["curriculum"]["max_images_per_iter"],
+            max_images=max_images_per_iter,
             pseudo_labels_dir=pseudo_labels_dir,
             pseudo_images_dir=pseudo_images_dir,
         )
-        print(f"Добавлено псевдо-размеченных кадров: {len(used_original_images)}")
+        print(f"\n=== Добавлено псевдо-размеченных кадров: {len(used_original_images)} ===")
+        logging.info(f"Iteration {it+1}: max_images_per_iter = {max_images_per_iter}, "
+                     f"added {len(used_original_images)} pseudo-labeled images.")
 
-        # 8) Удаляем использованные unlabeled-картинки
+        # 8) Перемещаем использованные изображения в папку Unlabeled_used
         removed = 0
         for p in used_original_images:
-            try:
-                p.unlink()
-                removed += 1
-            except FileNotFoundError:
-                pass
-        print(f"Удалено использованных unlabeled изображений: {removed}")
+            move_image_to_used(p, unlabeled_used_dir)
+            removed += 1
+
+        print(f"Перемещено использованных изображений: {removed}")
 
         # 9) Обновляем перцентиль
         current_percentile = max(0.0, current_percentile - cfg["curriculum"]["step_percentile"])
+
+        # Увеличиваем max_images_per_iter на основе конфигурации
+        if it < cfg["curriculum"]["num_iters"] - 1:  # Увеличиваем не в последней итерации
+            max_images_per_iter = int(max_images_per_iter * max_images_increase_factor)
+            # Мы ограничиваем увеличиваемое количество максимальными размерами Unlabeled
+            max_images_per_iter = min(max_images_per_iter, len(list(unlabeled_dir.glob("*"))))
+
+
+
+
+
+

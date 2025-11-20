@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Tuple
 import numpy as np
 from ultralytics import YOLO
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 
 def list_unlabeled_images(unlabeled_dir: str | Path) -> list[Path]:
@@ -17,9 +17,10 @@ def list_unlabeled_images(unlabeled_dir: str | Path) -> list[Path]:
 
 
 def compute_image_scores_yolo(
-    model: YOLO,
-    unlabeled_images_dir: str | Path,
-    score_mode: str = "min",
+        model: YOLO,
+        unlabeled_images_dir: str | Path,
+        score_mode: str = "min",
+        batch_size: int = 16  # Добавляем параметр для размера батча
 ) -> List[Tuple[Path, float, object]]:
     """
     Возвращает список (img_path, frame_score, result)
@@ -28,29 +29,38 @@ def compute_image_scores_yolo(
     img_paths = list_unlabeled_images(unlabeled_images_dir)
     scores = []
 
-    results = model.predict(
-        source=[str(p) for p in img_paths],
-        stream=True,
-        conf=0.0,
-        verbose=False,
-    )
+    # Разбиваем изображения на батчи
+    for i in trange(0, len(img_paths), batch_size, desc="Pseudo-labeling.."):
+        batch_paths = img_paths[i:i + batch_size]
 
-    for img_path, r in tqdm(
-        zip(img_paths, results),
-        total=len(img_paths),
-        desc="Pseudo-labeling",
-    ):
-        if r.boxes is None or r.boxes.shape[0] == 0:
-            frame_score = 0.0
-        else:
-            confs = r.boxes.conf.cpu().numpy()
-            if score_mode == "min":
-                frame_score = float(confs.min())
-            elif score_mode == "mean":
-                frame_score = float(confs.mean())
+        # Прогоняем изображения по батчу
+        results = model.predict(
+            source=[str(p) for p in batch_paths],
+            stream=True,
+            conf=0.0,
+            verbose=False,
+        )
+
+        # Обрабатываем результаты для текущего батча
+        for img_path, r in zip(batch_paths, results):
+        # for img_path, r in tqdm(
+        #         zip(batch_paths, results),
+        #         total=len(batch_paths),
+        #         desc=f"Pseudo-labeling (batch {i // batch_size + 1})",
+        # ):
+            if r.boxes is None or r.boxes.shape[0] == 0:
+                frame_score = 0.0
             else:
-                frame_score = float(confs.max())
-        scores.append((img_path, frame_score, r))
+                confs = r.boxes.conf.cpu().numpy()
+                if score_mode == "min":
+                    frame_score = float(confs.min())
+                elif score_mode == "mean":
+                    frame_score = float(confs.mean())
+                else:
+                    frame_score = float(confs.max())
+
+            # Добавляем результат
+            scores.append((img_path, frame_score, r))  # Сохраняем r
 
     return scores
 
