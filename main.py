@@ -1,12 +1,9 @@
 # main.py
+import subprocess
+
 from auxiliary.prepare_supervised import train_supervised
 from auxiliary.curriculum_yolo import curriculum_training
-from add_ons.collect_yolo_metrics import (
-    load_results,
-    save_merged_results,
-    plot_yolo_like_report,
-    setup_pandas_options,
-    plot_yolo_like_report_plotly)
+from add_ons.collect_yolo_metrics import setup_pandas_options
 
 setup_pandas_options()
 
@@ -27,7 +24,4 @@ if __name__ == "__main__":
     curriculum_training("configs/config.yaml")  # second launch
 
     # Collect & plots metrics
-    df_all = load_results()
-    save_merged_results(df_all)
-    plot_yolo_like_report(df_all)
-    plot_yolo_like_report_plotly(df_all)
+    subprocess.run(["python", "add_ons/collect_yolo_metrics.py"])

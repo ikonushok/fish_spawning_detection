@@ -137,7 +137,7 @@ def verify_labels(train_images_dir: Path, train_labels_dir: Path) -> int:
                     examples_bad.append(f"{img_path.name}: '{label}'")
                 break
 
-    logging.info(
+    logging.debug(
         f"[VERIFY] Всего изображений: {total_images}, ошибок: {errors} "
         f"(нет метки: {missing_label}, пустая: {empty_label}, неверный формат: {bad_format})"
     )
@@ -233,19 +233,27 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
 
             # Проверка формата меток
             valid_format = True
+            # Для каждой метки:
             for label in labels:
                 parts = label.split()
                 if len(parts) < 5:
-                    valid_format = False
-                    break
+                    logging.error(f"Некорректная метка (недостаточно параметров): {label}")
+                    continue  # Пропускаем метку, если не хватает параметров
                 try:
-                    x_center, y_center, width, height = map(float, parts[1:5])
+                    # Преобразуем значения в числа
+                    x_center = float(parts[1])
+                    y_center = float(parts[2])
+                    width = float(parts[3])
+                    height = float(parts[4])
+
+                    # Проверяем, что все значения находятся в допустимом диапазоне
                     if not (0 <= x_center <= 1 and 0 <= y_center <= 1 and width > 0 and height > 0):
-                        valid_format = False
-                        break
+                        logging.error(f"Некорректные значения в метке: {label}")
+                        continue  # Пропускаем метку с некорректными значениями
+
                 except ValueError:
-                    valid_format = False
-                    break
+                    logging.error(f"Ошибка при преобразовании значений метки для изображения {img_path.name}: {label}")
+                    continue  # Если не удалось преобразовать значения, пропускаем метку
 
             if not valid_format:
                 logging.warning(f"Некорректный формат метки для изображения {img_path.name}. Пропускаем.")
@@ -341,13 +349,42 @@ def merge_train_dataset_for_iter(cfg: dict, root_dir: Path, work_dir: Path, iter
 
     return train_images_dir, train_labels_dir
 
+# После завершения тренировки на текущей итерации
+# remove_previous_iteration_data(it, work_dir)
+
+
+def get_train_val_stats(images_dir: Path, labels_dir: Path) -> dict:
+    """
+    Функция для вычисления статистики для train или val данных.
+    Возвращает словарь с количеством картинок и меток.
+    """
+    image_paths = list(images_dir.glob("*.*"))
+    label_paths = {label_path.stem for label_path in labels_dir.glob("*.txt")}
+
+    total_images = len(image_paths)
+    total_labels = len(label_paths)
+
+    # Картинки без меток
+    images_with_labels = sum(1 for img_path in image_paths if img_path.stem in label_paths)
+    images_without_labels = total_images - images_with_labels
+
+    # Метки без картинок
+    labels_without_images = total_labels - images_with_labels
+
+    stats = {
+        "total_images": total_images,
+        "total_labels": total_labels,
+        "images_with_labels": images_with_labels,
+        "images_without_labels": images_without_labels,
+        "labels_without_images": labels_without_images
+    }
+
+    return stats
+
 
 def curriculum_training(config_path: str | None = None):
     """
-    Основной цикл Curriculum Learning поверх нового YOLO-датасета:
-      - config.yaml: всегда берём из configs/config.yaml (от корня проекта), либо переопределяем аргументом.
-      - dataset.root_dir: "dataset/yolo_dataset" (относительно корня проекта).
-      - unlabeled: "images/Unlabeled" внутри root_dir.
+    Основной цикл Curriculum Learning поверх нового YOLO-датасета.
     """
     # 1) Определяем путь к конфигу
     if config_path is None:
@@ -359,49 +396,41 @@ def curriculum_training(config_path: str | None = None):
 
     cfg = load_config(str(cfg_path))
 
-    # 2) Путь к data_supervised.yaml (где его создаёт prepare_supervised.py)
-    #    В конфиге: "artefacts/data_supervised.yaml" — от корня проекта.
+    # 2) Путь к data_supervised.yaml
     data_supervised_rel = cfg["output"]["yolo_data_supervised"]
     data_supervised_path = (PROJECT_ROOT / data_supervised_rel).resolve()
 
     if not data_supervised_path.exists():
-        raise FileNotFoundError(
-            f"Не найден {data_supervised_path}. "
-            f"Убедитесь, что prepare_supervised.py создал его в {data_supervised_path}."
-        )
+        raise FileNotFoundError(f"Не найден {data_supervised_path}. Убедитесь, что prepare_supervised.py создал его.")
 
     with data_supervised_path.open("r", encoding="utf-8") as f:
         data_supervised = yaml.safe_load(f)
-    # сейчас мы только проверяем наличие и читаем на всякий случай
 
     # 3) Корень YOLO-датасета
-    root_dir_cfg = Path(cfg["dataset"]["root_dir"])  # "dataset/yolo_dataset"
+    root_dir_cfg = Path(cfg["dataset"]["root_dir"])
     if root_dir_cfg.is_absolute():
         root_dir = root_dir_cfg
     else:
         root_dir = (PROJECT_ROOT / root_dir_cfg).resolve()
 
     # Папки unlabeled и val
-    unlabeled_dir = root_dir / cfg["dataset"]["unlabeled"]["images_dir"]   # images/Unlabeled
-    val_images_dir = root_dir / cfg["dataset"]["val"]["images_dir"]       # images/Val
+    unlabeled_dir = root_dir / cfg["dataset"]["unlabeled"]["images_dir"]
+    val_images_dir = root_dir / cfg["dataset"]["val"]["images_dir"]
+    val_labels_dir = root_dir / cfg["dataset"]["val"]["labels_dir"]  # Добавлен путь к меткам val
 
-    # 4) Рабочая директория для Curriculum (weights, итерации и т.п.)
-    work_rel = cfg["output"]["curriculum_dir"]      # "artefacts/runs/curriculum_yolo"
+    # 4) Рабочая директория для Curriculum
+    work_rel = cfg["output"]["curriculum_dir"]
     work_dir = (PROJECT_ROOT / work_rel).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
     current_percentile = cfg["curriculum"]["start_percentile"]
     max_images_per_iter = cfg["curriculum"]["max_images_per_iter"]
-    max_images_increase_factor = cfg["curriculum"]["max_images_increase_factor"]  # новый параметр
+    max_images_increase_factor = cfg["curriculum"]["max_images_increase_factor"]
     unlabeled_used_dir = root_dir / cfg["dataset"]["unlabeled"]["unlabeled_used"]
 
     for it in range(cfg["curriculum"]["num_iters"]):
-        print(
-            f"\n=== Curriculum iteration {it+1}/{cfg['curriculum']['num_iters']} "
-            f"(percentile={current_percentile}, max_images={max_images_per_iter}) ==="
-        )
-        # После завершения тренировки на текущей итерации
-        remove_previous_iteration_data(it, work_dir)
+        print(f"\n=== Curriculum iteration {it + 1}/{cfg['curriculum']['num_iters']} "
+              f"(percentile={current_percentile}, max_images={max_images_per_iter}) ===")
 
         # Проверяем, остались ли неразмеченные кадры
         if not list_unlabeled_images(unlabeled_dir):
@@ -413,12 +442,36 @@ def curriculum_training(config_path: str | None = None):
         pseudo_images_dir = iter_dir / "images"
 
         # 1) Объединяем train (размеченные + все старые pseudo) в один датасет
-        train_images_dir, _ = merge_train_dataset_for_iter(
+        train_images_dir, train_labels_dir = merge_train_dataset_for_iter(  # Сохраняем train_labels_dir
             cfg=cfg,
             root_dir=root_dir,
             work_dir=work_dir,
             iter_idx=it,
         )
+
+        # Получаем статистику для train
+        train_stats = get_train_val_stats(train_images_dir, train_labels_dir)
+
+        logging.info(f"===TRAIN STATS: ==="
+                     f"\tИтерация {it + 1}:\tкартинок всего:{train_stats['total_images']}, "
+                     f"меток всего: {train_stats['total_labels']}...\t"
+                     f"картинок с метками: {train_stats['images_with_labels']}, "
+                     f"картинок без меток: {train_stats['images_without_labels']}, "
+                     f"меток без картинок: {train_stats['labels_without_images']}")
+
+        # Получаем статистику для val
+        val_stats = get_train_val_stats(val_images_dir, val_labels_dir)
+
+        logging.info(f"=== VAL STATS ===\n"
+                     f"\tИтерация {it + 1}:\tкартинок всего:{val_stats['total_images']}, "
+                     f"меток всего: {val_stats['total_labels']}...\t"
+                     f"картинок с метками: {val_stats['images_with_labels']}, "
+                     f"картинок без меток: {val_stats['images_without_labels']}, "
+                     f"меток без картинок: {val_stats['labels_without_images']}")
+
+        # Логируем текущее количество изображений в train
+        logging.debug(f"Итерация {it + 1}: Количество изображений в train "
+                      f"до добавления псевдоразметки: {len(list(train_images_dir.glob('*')))}")
 
         # 2) Инициализируем модель из базового чекпоинта
         base_model = cfg["yolo"]["base_model"]
@@ -443,6 +496,12 @@ def curriculum_training(config_path: str | None = None):
             project=str(work_dir),
             name=f"iter_{it}",
             exist_ok=True,
+            # Добавление параметров для аугментации данных
+            augment=True,  # Включаем аугментацию
+            flipud=0.5,  # Вертикальное отражение
+            fliplr=0.5,  # Горизонтальное отражение
+            scale=0.2,  # Масштабирование
+            degrees=10,  # Повороты
         )
 
         # 5) Берём best.pt
@@ -469,9 +528,8 @@ def curriculum_training(config_path: str | None = None):
             pseudo_labels_dir=pseudo_labels_dir,
             pseudo_images_dir=pseudo_images_dir,
         )
-        print(f"\n=== Добавлено псевдо-размеченных кадров: {len(used_original_images)} ===")
-        logging.info(f"Iteration {it+1}: max_images_per_iter = {max_images_per_iter}, "
-                     f"added {len(used_original_images)} pseudo-labeled images.")
+        # Логируем количество добавленных изображений
+        logging.info(f"Итерация {it + 1}: Добавлено {len(used_original_images)} псевдоразмеченных изображений")
 
         # 8) Перемещаем использованные изображения в папку Unlabeled_used
         removed = 0
@@ -480,6 +538,7 @@ def curriculum_training(config_path: str | None = None):
             removed += 1
 
         print(f"Перемещено использованных изображений: {removed}")
+        logging.info(f"Итерация {it + 1}: Перемещено {removed} изображений в папку Unlabeled_used")
 
         # 9) Обновляем перцентиль
         current_percentile = max(0.0, current_percentile - cfg["curriculum"]["step_percentile"])
@@ -487,10 +546,7 @@ def curriculum_training(config_path: str | None = None):
         # Увеличиваем max_images_per_iter на основе конфигурации
         if it < cfg["curriculum"]["num_iters"] - 1:  # Увеличиваем не в последней итерации
             max_images_per_iter = int(max_images_per_iter * max_images_increase_factor)
-            # Мы ограничиваем увеличиваемое количество максимальными размерами Unlabeled
             max_images_per_iter = min(max_images_per_iter, len(list(unlabeled_dir.glob("*"))))
-
-
 
 
 

@@ -4,8 +4,11 @@ dataset:
   root_dir: "dataset/yolo_dataset"
   train:
     images_dir: "images/Train"
+    labels_dir: "images/Val"  # Папка с валидационными метками
+
   val:
     images_dir: "images/Val"
+    labels_dir: "labels/Val"  # Папка с валидационными метками
   unlabeled:
     images_dir: "images/Unlabeled"  # тут неразмеченные кадры (стримы с дрона и т.п.)
     unlabeled_used: "images/Unlabeled_used"  # сюда копируются использованные неразмеченные изображения
@@ -17,15 +20,15 @@ yolo:
 #  base_model: "artefacts/yolov8n.pt"  # Есть более крупные версии (yolov8s, yolov8m, yolov8l, yolov8x)
 #  base_model: "artefacts/yolov7-tiny.pt"
   base_model: "artefacts/yolov5nu.pt"
-  img_size: 320  # 640  # 1280
+  img_size: 640  # 640  # 1280
   batch_size: 8
   epochs_supervised: 10 # 50 ??  # базовое обучение (только размеченные данные)
-  epochs_per_iter: 10    # 20 ??  # обучение на каждом шаге Curriculum
+  epochs_per_iter: 10   # 20 ??  # обучение на каждом шаге Curriculum
 
 curriculum:
-  num_iters: 10
+  num_iters: 5
   start_percentile: 95.0      # сначала берём только самые уверенные кадры
-  step_percentile: 5.0       # потом порог понижаем
+  step_percentile: 5.0        # потом порог понижаем
   max_images_per_iter: 200    # сколько новых unlabeled-картинок максимум можно добавить в train на одной итерации curriculum
   max_images_increase_factor: 1.1  # Увеличение max_images_per_iter на 10% в каждой итерации
   score_mode: "min"           # min/mean/max по conf боксов в кадре

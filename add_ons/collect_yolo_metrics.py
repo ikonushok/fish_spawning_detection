@@ -58,12 +58,19 @@ def load_results() -> pd.DataFrame:
     df_all = df_all.sort_values(["iter", "epoch"]).reset_index(drop=True)
 
     # посчитаем глобальный шаг (эпохи всех этапов подряд)
+    # global_step = []
+    # offset = 0
+    # for _, df_phase in df_all.groupby("iter", sort=True):
+    #     epochs = df_phase["epoch"].values
+    #     global_step.extend(epochs + offset)
+    #     offset += epochs.max() + 1  # следующий этап начинается после последней эпохи
+
+    # Чтобы global_epoch был непрерывным и начинался с 0 на каждом этапе:
     global_step = []
-    offset = 0
-    for _, df_phase in df_all.groupby("iter", sort=True):
+    for iter_idx, df_phase in df_all.groupby("iter", sort=True):
         epochs = df_phase["epoch"].values
-        global_step.extend(epochs + offset)
-        offset += epochs.max() + 1  # следующий этап начинается после последней эпохи
+        # Просто добавляем все эпохи как есть без изменений, так чтобы они накладывались
+        global_step.extend(epochs)
 
     df_all["global_epoch"] = global_step
 
@@ -80,7 +87,7 @@ def save_merged_results(df_all: pd.DataFrame,
     print(f"[INFO] Итоговый CSV с результатами сохранён в: {save_path.resolve()}")
 
 
-def plot_yolo_like_report(
+def plot_yolo_report(
     df_all: pd.DataFrame,
     use_global_epoch: bool = True,
     save_dir: Path = REPORT_DIR,
@@ -158,7 +165,7 @@ def plot_yolo_like_report(
     plt.show()
 
 
-def plot_yolo_like_report_plotly(df_all, use_global_epoch: bool = True):
+def plot_yolo_report_plotly(df_all, use_global_epoch: bool = True):
     """
     Интерактивный отчёт в стиле yolo results с помощью plotly.
     2x5 subplot'ов, легенда внизу, общий заголовок наверху.
@@ -183,7 +190,13 @@ def plot_yolo_like_report_plotly(df_all, use_global_epoch: bool = True):
         ("metrics/mAP50-95(B)",  "metrics/mAP50-95(B)"),
     ]
 
-    # создаём сетку 2x5 с заголовками подграфиков
+    # Генерация цветов из matplotlib
+    colors = plt.cm.tab10.colors  # Используем палитру tab10 из matplotlib
+    color_map = {
+        phase: f"rgb({int(colors[i % len(colors)][0] * 255)}, {int(colors[i % len(colors)][1] * 255)}, {int(colors[i % len(colors)][2] * 255)})"
+        for i, phase in enumerate(df_all["phase"].unique())}
+
+    # создаём сетку 2x5 для графиков
     fig = make_subplots(
         rows=2,
         cols=5,
@@ -200,39 +213,39 @@ def plot_yolo_like_report_plotly(df_all, use_global_epoch: bool = True):
         col_idx = i % 5 + 1
 
         if col not in df_all.columns:
-            # просто оставим пустой график, без трасс
+            # просто оставим пустой график, если метрика отсутствует
             continue
 
         for phase in phases:
             df_phase = df_all[df_all["phase"] == phase]
 
+            # Устанавливаем цвет линии, используя маппинг из цветов
             fig.add_trace(
                 go.Scatter(
                     x=df_phase[x_col],
                     y=df_phase[col],
                     mode="lines+markers",
                     name=phase,
-                    showlegend=(i == 0),  # легенду показываем только один раз
+                    line=dict(color=color_map[phase]),  # Задаем цвет из color_map для каждой фазы
+                    showlegend=(i == 0),  # Легенду показываем только один раз
                 ),
                 row=row,
                 col=col_idx,
             )
 
-    # подписи осей X только внизу
+    # Подписи осей X только внизу
     xaxis_title = "global epoch" if use_global_epoch else "epoch"
-    for j in range(1, 6):
+    for j in range(1, 10):
         fig.update_xaxes(title_text=xaxis_title, row=2, col=j)
 
-    # можно задать подписи Y для левого столбца
+    # Подписи осей Y для первого столбца
     fig.update_yaxes(title_text="value", row=1, col=1)
     fig.update_yaxes(title_text="value", row=2, col=1)
 
-    # общий заголовок и легенда внизу
+    # Общий заголовок и легенда внизу
     fig.update_layout(
         title_text="Supervised + Curriculum YOLO training report (Plotly)",
         title_x=0.5,
-        height=900,
-        width=1600,
         legend=dict(
             orientation="h",
             yanchor="top",
@@ -246,13 +259,15 @@ def plot_yolo_like_report_plotly(df_all, use_global_epoch: bool = True):
     fig.show(renderer="browser")
 
 
+
+
 if __name__ == "__main__":
     df_all = load_results()
-    print(df_all.head())
+    print(df_all)
 
     # сохраняем объединённый CSV
     save_merged_results(df_all)
 
     # рисуем и сохраняем картинку-отчёт
-    plot_yolo_like_report(df_all)
-    plot_yolo_like_report_plotly(df_all)
+    plot_yolo_report(df_all)
+    plot_yolo_report_plotly(df_all)

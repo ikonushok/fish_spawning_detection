@@ -199,8 +199,7 @@ def train_supervised(cfg_path: str | None = None):
     model = YOLO(cfg["yolo"]["base_model"])
 
     # runs_supervised: "artefacts/runs/supervised_yolo" -> абсолютный путь
-    runs_rel = cfg["output"]["runs_supervised"]
-    runs_dir = (PROJECT_ROOT / runs_rel).resolve()
+    runs_dir = (PROJECT_ROOT / cfg["output"]["runs_supervised"]).resolve()
     runs_dir.parent.mkdir(parents=True, exist_ok=True)
 
     model.train(
@@ -210,6 +209,11 @@ def train_supervised(cfg_path: str | None = None):
         batch=cfg["yolo"]["batch_size"],
         project=str(runs_dir),
         name="baseline",
+        augment=True,  # Включаем аугментацию
+        flipud=0.5,  # Вертикальное отражение
+        fliplr=0.5,  # Горизонтальное отражение
+        scale=0.2,  # Масштабирование
+        degrees=10,  # Повороты
     )
 
     logging.info("Базовое обучение завершено.")
