@@ -15,7 +15,6 @@ def load_config(config_path: str = "config.yaml") -> dict:
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-
 # Функция для получения последней обученной модели
 def get_latest_model(cfg: dict) -> str:
     # Путь к папке с результатами
@@ -29,7 +28,6 @@ def get_latest_model(cfg: dict) -> str:
         raise FileNotFoundError("Последняя модель не найдена.")
 
     return str(model_dir)
-
 
 # Функция для выполнения предсказания на изображениях
 def predict_on_unlabeled_images(cfg: dict, model_path: str, image_folder: str | Path) -> list:
@@ -47,8 +45,6 @@ def predict_on_unlabeled_images(cfg: dict, model_path: str, image_folder: str | 
 
     return predictions
 
-
-
 # Функция для сохранения разметки боундбоксов на изображениях
 def save_bounding_boxes(predictions: list, output_dir: str | Path):
     output_dir = Path(output_dir)
@@ -56,7 +52,7 @@ def save_bounding_boxes(predictions: list, output_dir: str | Path):
 
     saved_count = 0
 
-    for img_path, result in predictions:
+    for img_path, result in tqdm(predictions, desc="Сохранение изображений для создания видео: "):
         img_path = Path(img_path)
 
         # Загружаем изображение
@@ -96,8 +92,6 @@ def save_bounding_boxes(predictions: list, output_dir: str | Path):
 
     print(f"Сохранено изображений с баундбоксами: {saved_count} в {output_dir}")
 
-
-
 # Функция для создания видео из изображений
 def create_video_from_images(image_folder: str | Path, output_video_path: str, fps: int = 30):
     image_folder = Path(image_folder)
@@ -127,7 +121,6 @@ def create_video_from_images(image_folder: str | Path, output_video_path: str, f
 
     video_writer.release()
     print(f"Видео сохранено в: {output_video_path}")
-
 
 
 # Основной процесс
@@ -160,8 +153,6 @@ def main(config_path: str = "configs/config.yaml"):
     # Создаём видео с результатами
     output_video_path = "artefacts/annotated_video.mp4"
     create_video_from_images(output_dir, output_video_path)
-
-    print(f"Видео создано: {output_video_path}")
 
 
 if __name__ == "__main__":
